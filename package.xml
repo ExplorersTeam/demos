@@ -1,0 +1,23 @@
+<assembly>
+    <id>jar-with-dependcies</id>
+    <formats>
+        <format>jar</format>
+    </formats>
+	<includeBaseDirectory>false</includeBaseDirectory>
+
+    <dependencySets>
+        <dependencySet>
+            <useProjectArtifact>false</useProjectArtifact>
+            <outputDirectory>lib</outputDirectory>
+            <scope>runtime</scope>
+        </dependencySet>
+    </dependencySets>
+    
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/target/classes</directory>
+            <outputDirectory>\</outputDirectory>
+        </fileSet>
+    </fileSets>    
+
+</assembly>  

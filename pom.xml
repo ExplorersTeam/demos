@@ -11,6 +11,71 @@
   	<java.version>1.8</java.version>
   </properties>
   
+  <profiles>
+
+        <profile>
+            <id>HDP</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <!-- <hadoop.classifier>hadoop2.7-hdp</hadoop.classifier> -->
+                <hadoop.version>2.7.3.2.5.3.0-37</hadoop.version>
+                <hbase.version>1.1.2.2.5.3.0-37</hbase.version>
+            </properties>
+            
+            <repositories>
+                <repository>
+                    <id>HDPublic</id>
+                    <name>HDPublic</name>
+                    <url>http://repo.hortonworks.com/content/groups/public/</url>
+                </repository>
+
+                <repository>
+                    <id>HDPReleases</id>
+                    <name>HDPReleases</name>
+                    <url>http://repo.hortonworks.com/content/repositories/releases/</url>
+                </repository>
+            </repositories>
+        </profile>
+  </profiles>
+  
+  <dependencies>
+  		<dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
+        </dependency>
+        
+        <!-- lsg添加jdk.tools包依赖 -->
+		<dependency>
+            <groupId>jdk.tools</groupId>
+            <artifactId>jdk.tools</artifactId>
+            <version>1.8</version>
+            <scope>system</scope>
+            <systemPath>${JAVA_HOME}/lib/tools.jar</systemPath>
+    	</dependency>
+    	
+    	<dependency>
+            <groupId>org.apache.hbase</groupId>
+            <artifactId>hbase-client</artifactId>
+            <version>1.1.2.2.5.3.0-37</version>
+    	</dependency>
+    	
+    	<dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-mapreduce-client-core</artifactId>
+            <version>${hadoop.version}</version>
+    	</dependency>
+    	
+    	<dependency>
+            <groupId>org.apache.hbase</groupId>
+            <artifactId>hbase-server</artifactId>
+            <version>1.1.2.2.5.3.0-37</version>
+    	</dependency>
+        
+  </dependencies>
+  
   <build>
   	<pluginManagement>
   		<plugins>
@@ -24,7 +89,42 @@
   					<encoding>${default.encoding}</encoding>
   				</configuration>
   			</plugin>
+  			
+  			<plugin>
+            <artifactId>maven-assembly-plugin</artifactId>
+            <version>3.0.0</version>
+            <configuration>
+            <!-- 对于长文件名tar时不报警 -->
+            <tarLongFileMode>posix</tarLongFileMode>
+
+            <descriptors>
+            <!--<tarLongFileMode>gnu</tarLongFileMode>-->
+            <descriptor>package.xml</descriptor>
+            </descriptors>
+            <!--这里可以把所有的依赖包打成一个包，但是包存在版本冲突时不如shade方便，shade可以修改包名避免冲突-->
+            <!--<descriptorRefs>-->
+            <!--<descriptorRef>jar-with-dependencies</descriptorRef>-->
+            <!--</descriptorRefs>-->
+	        <!--    <archive>
+		            <manifest>
+		            	<mainClass>org.exp.demos.mapreduce.CTDFSSmallFileAmount</mainClass>
+		            </manifest>
+	            </archive>
+	             -->
+            </configuration>
+            <executions>
+            <execution>
+            <id>make-assembly</id>
+            <phase>package</phase>
+            <goals>
+            <goal>single</goal>
+            </goals>
+            </execution>
+            </executions>
+            </plugin>
+  			
   		</plugins>
   	</pluginManagement>
   </build>
+  
 </project>
