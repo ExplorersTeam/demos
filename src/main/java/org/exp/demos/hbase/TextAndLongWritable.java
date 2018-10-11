@@ -50,4 +50,12 @@ class TextAndLongWritable implements WritableComparable<TextAndLongWritable>{
 		return (int)length.compareTo(o.getLongWritable());
 	}
 	
+	public String  toString(){
+		String name = this.getText().toString();
+		String length = this.getLongWritable().toString();
+		StringBuilder sb = new StringBuilder();
+		String o_str = sb.append("["+name+","+length+"]").toString();
+		return o_str;
+	}
+	
 }
