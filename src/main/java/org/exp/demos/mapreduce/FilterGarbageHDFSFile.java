@@ -1,4 +1,4 @@
-package org.exp.demos.hbase;
+package org.exp.demos.mapreduce;
 
 
 import java.io.IOException;
