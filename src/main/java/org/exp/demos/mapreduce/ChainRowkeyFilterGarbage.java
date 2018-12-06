@@ -189,11 +189,6 @@ public class ChainRowkeyFilterGarbage {
 			}
 			table.put(put);
 	}
-	// hbaseInit,初始化hbase连接
-//	public static void hbaseInit(Configuration conf,String tableName) throws IOException{
-//		connection = ConnectionFactory.createConnection(conf);
-//		table = connection.getTable(TableName.valueOf(tableName));
-//	}
 
 	static class GcMapper extends Mapper<Text,Text,Text,Text>{
 		byte[] family = Bytes.toBytes("f");
@@ -211,15 +206,6 @@ public class ChainRowkeyFilterGarbage {
 		
 		String tableName = "dfs:dfs_file";
 		Map<String,String> rowDataMap = Maps.newHashMap(); 
-		
-//		@Override
-//		public void setup(Context context) throws IOException{
-//			conf = new Configuration();
-//			conf.set("hbase.zookeeper.quorum", "h3a1.ecloud.com,h3m1.ecloud.com,h3m2.ecloud.com");
-//			conf.set("hbase.zookeeper.property.clientPort", "2181");
-//			conf.set("zookeeper.znode.parent", "/hbase-h3");
-//			conf.set("hbase.rootdir", "hdfs://h3/apps/hbase/data");
-//		}
 		
 		//map key=gabage hdfsuri value=dfsinfo
 		public void map(Text key,Text smallfiles,Context context) throws IOException, InterruptedException{
@@ -249,65 +235,6 @@ public class ChainRowkeyFilterGarbage {
 			ResultScanner results = table.getScanner(scan);
 			for(Result result:results){
 				LOG.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"+result.toString());
-			}
-			
-			//LOG.warn(	">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> " +		connection.getTable(TableName.valueOf("dfs:dfs_dir")).getScanner(scan).iterator().hasNext());
-			
-//			ResultScanner results = getResults(table,family,qualifier_n,datafile);
-//			int offset = 0;
-//			for(Result result:results){
-//				Cell i = result.getColumnLatestCell(family, qualifier_i);
-//				Cell l = result.getColumnLatestCell(family, qualifier_l);
-//				Cell s = result.getColumnLatestCell(family, qualifier_s);
-//				Cell t = result.getColumnLatestCell(family, qualifier_t);
-//				Cell f = result.getColumnLatestCell(family, qualifier_f);
-//				Cell d = result.getColumnLatestCell(family, qualifier_d);
-//				Cell o = result.getColumnLatestCell(family, qualifier_o);
-//				Cell g = result.getColumnLatestCell(family, qualifier_g);
-//				Cell p = result.getColumnLatestCell(family, qualifier_p);
-//				
-//				String rowkey = Bytes.toString(result.getRow());
-//				long startIndex = Bytes.toLong(CellUtil.cloneValue(i));
-//				int length =  Bytes.toInt(CellUtil.cloneValue(l));
-//				String status = Bytes.toString(CellUtil.cloneValue(s));
-//				String ctime = Bytes.toString(CellUtil.cloneValue(t));
-//				String fileinfo = Bytes.toString(CellUtil.cloneValue(f));
-//				String isdir = Bytes.toString(CellUtil.cloneValue(d));
-//				String owner = Bytes.toString(CellUtil.cloneValue(o));
-//				String group = Bytes.toString(CellUtil.cloneValue(g));
-//				String permission = Bytes.toString(CellUtil.cloneValue(p));
-//				
-//				rowDataMap = toMap(status,ctime,datafile,startIndex,length,fileinfo,
-//				isdir,owner,group,permission);
-//				
-//				//暂且不执行读、写操作
-//				byte[] buffer = new byte[length];
-//				in.readFully(startIndex, buffer, offset, length);
-//				
-//				out.write(buffer, offset, length);
-//				startIndex = out.getPos();				
-//				rowDataMap = toMap(status,ctime,datafile,startIndex,length,fileinfo,
-//						isdir,owner,group,permission);
-//				put(table, rowkey, rowDataMap);
-//				for(Entry<String,String> entry:rowDataMap.entrySet()){
-//					context.write(key, new Text("["+entry.getKey()+","+entry.getValue()+"]"));
-//				}
-//				rowDataMap = null;
-//			}
-//			
-//			boolean flagDelete = fs.delete(hdfsReadPath, true);
-//			boolean flagRename = fs.rename(hdfsWritePath, hdfsReadPath);
-//			if(flagDelete&&flagRename){
-//				context.getCounter(Counters.MigrationAmount).increment(1);
-//			}
-		}
-		@Override
-		public void cleanup(Context context){
-			try {
-				table.close();
-				connection.close();
-			} catch (IOException e) {
-				e.printStackTrace();
 			}
 		}
 	}
