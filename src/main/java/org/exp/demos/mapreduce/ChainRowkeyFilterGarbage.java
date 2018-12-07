@@ -42,6 +42,7 @@ import org.apache.hadoop.mapreduce.lib.chain.ChainReducer;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import com.ctg.ctdfs.core.common.DFSConstants;
+import com.ctg.ctdfs.core.common.HBaseClient;
 import com.google.common.collect.Maps;
 
 
@@ -214,22 +215,18 @@ public class ChainRowkeyFilterGarbage {
 			Path hdfsWritePath = new Path(datafile +".temp");
 			//在每个map里实例化Configuration
 			Configuration conf = new Configuration();
-			conf.set("hbase.zookeeper.quorum", "h3a1.ecloud.com,h3m1.ecloud.com,h3m2.ecloud.com");
-			conf.set("hbase.zookeeper.property.clientPort", "2181");
-			conf.set("zookeeper.znode.parent", "/hbase-h3");
-			conf.set("hbase.rootdir", "hdfs://h3/apps/hbase/data");
+			conf.addResource("/etc/hbase/conf/core-site.xml");
+			conf.addResource("/etc/hbase/conf/hbase-site.xml");
+			conf.addResource("/etc/hbase/conf/hdfs-site.xml");
+			LOG.info("*******************************"+conf.get("zookeeper.znode.parent"));
+			LOG.info("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&"+conf.get("hbase.zookeeper.quorum"));
 			fs = hdfsReadPath.getFileSystem(conf);
 			FSDataInputStream in = null;
 			in = fs.open(hdfsReadPath);
 			FSDataOutputStream out = fs.create(hdfsWritePath,true);//temp文件覆盖写
-			LOG.info("---------------------------------"+conf.get("hbase.zookeeper.quorum"));
-			//在每个map里实例化Connection、Table
 			Connection connection = ConnectionFactory.createConnection(conf);
 			Table table = connection.getTable(TableName.valueOf(tableName));
-			LOG.info("+++++++++++++++++++++++++++++++++"+table.toString());
-			LOG.info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! " + table.getConfiguration().get("hbase.zookeeper.quorum"));
-			//do not use hbaseClient,use SingleColumnValueFilter get the useful record
-			
+			//do not use hbaseClient,use SingleColumnValueFilter get the useful record			
 			Scan scan = new Scan();
 			scan.setFilter(new SingleColumnValueFilter(family, qualifier_t, CompareOp.EQUAL, datafile.getBytes()));
 			ResultScanner results = table.getScanner(scan);
