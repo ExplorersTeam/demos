@@ -1,13 +1,15 @@
 package org.exp.demos.mapreduce;
 
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Date;
 import java.util.Map;
 import java.util.Map.Entry;
-
-import javax.print.attribute.ResolutionSyntax;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -22,7 +24,7 @@ import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
-import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
@@ -42,14 +44,12 @@ import org.apache.hadoop.mapreduce.lib.chain.ChainReducer;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import com.ctg.ctdfs.core.common.DFSConstants;
-import com.ctg.ctdfs.core.common.HBaseClient;
 import com.google.common.collect.Maps;
 
 
 public class ChainRowkeyFilterGarbage {
 	private static final Log LOG = LogFactory.getLog(ChainRowkeyFilterGarbage.class);
 	public static final String JOBNAME="FilterJob";
-	public static String HDFSFileName;
 	public static final long SMALLFILELENGTH = 2097152;
 	public static enum Counters {ROW,HDFSUriAmount,MigrationAmount,GarbageFileAmount,SmallFileAmount};
 
@@ -65,7 +65,7 @@ public class ChainRowkeyFilterGarbage {
 	public static FSDataOutputStream fs_out;
 	
 	private static Connection connection;
-	private static Table table = null;
+	private static HTable dfsFileTable = null;
 	
 //	
 	public ChainRowkeyFilterGarbage(){
@@ -109,6 +109,7 @@ public class ChainRowkeyFilterGarbage {
 		byte[] qualifier_d = Bytes.toBytes("d");//is dir or not of dfs file
 		byte[] qualifier_i = Bytes.toBytes("i");//the startindex of dfs file in hdfs file
 		
+		@Override
 		public void map(ImmutableBytesWritable rowkey,Result columns,Context context) throws IOException, InterruptedException{
 			context.getCounter(Counters.ROW).increment(1);
 			Cell hdfsFileUri = columns.getColumnLatestCell(family, qualifier_n);
@@ -136,6 +137,7 @@ public class ChainRowkeyFilterGarbage {
 		byte[] family = Bytes.toBytes("f");
 		byte[] qualifier_l = Bytes.toBytes("l");//the length of dfs file
 		
+		@Override
 		public void reduce(Text text,Iterable<Result> smallfiles,Context context) throws IOException, InterruptedException{
 			//text=one hdfsuri,smallfiles=dfs files belong to this hdfsuri
 			context.getCounter(Counters.HDFSUriAmount).increment(1);
@@ -208,31 +210,59 @@ public class ChainRowkeyFilterGarbage {
 		String tableName = "dfs:dfs_file";
 		Map<String,String> rowDataMap = Maps.newHashMap(); 
 		
+
 		//map key=gabage hdfsuri value=dfsinfo
+		@Override
 		public void map(Text key,Text smallfiles,Context context) throws IOException, InterruptedException{
 			String datafile = key.toString();
 			Path hdfsReadPath = new Path(datafile);
 			Path hdfsWritePath = new Path(datafile +".temp");
 			//在每个map里实例化Configuration
 			Configuration conf = new Configuration();
-			conf.addResource("/etc/hbase/conf/core-site.xml");
-			conf.addResource("/etc/hbase/conf/hbase-site.xml");
-			conf.addResource("/etc/hbase/conf/hdfs-site.xml");
-			LOG.info("*******************************"+conf.get("zookeeper.znode.parent"));
-			LOG.info("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&"+conf.get("hbase.zookeeper.quorum"));
+			// conf.addResource("/etc/hbase/conf/core-site.xml");
+			// conf.addResource("/etc/hbase/conf/hbase-site.xml");
+			// conf.addResource("/etc/hbase/conf/hdfs-site.xml");
+			InputStream coreSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/core-site.xml"));
+			InputStream hdfsSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hdfs-site.xml"));
+			InputStream hbaseSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hbase-site.xml"));
+			// if (coreSiteInputStream != null) {
+			// byte[] buffer = new byte[1024];
+			// StringBuffer sBuffer = new StringBuffer();
+			// while (coreSiteInputStream.read() != -1) {
+			// coreSiteInputStream.read(buffer);
+			// sBuffer.append(Bytes.toString(buffer));
+			// }
+			// LOG.info("coreSite file content is :" + "\n" +
+			// sBuffer.toString());
+			// }
+			conf.addResource(coreSiteInputStream);
+			conf.addResource(hdfsSiteInputStream);
+			conf.addResource(hbaseSiteInputStream);
+
+			LOG.info("ZooKeeper quorum is [" + conf.get("hbase.zookeeper.quorum") + "].");
 			fs = hdfsReadPath.getFileSystem(conf);
 			FSDataInputStream in = null;
 			in = fs.open(hdfsReadPath);
 			FSDataOutputStream out = fs.create(hdfsWritePath,true);//temp文件覆盖写
 			Connection connection = ConnectionFactory.createConnection(conf);
 			Table table = connection.getTable(TableName.valueOf(tableName));
+			LOG.info("Table name is [" + table.getName().getNameAsString() + "].");
 			//do not use hbaseClient,use SingleColumnValueFilter get the useful record			
 			Scan scan = new Scan();
 			scan.setFilter(new SingleColumnValueFilter(family, qualifier_t, CompareOp.EQUAL, datafile.getBytes()));
 			ResultScanner results = table.getScanner(scan);
+			LOG.info("Got result? [" + results.iterator().hasNext() + "].");
 			for(Result result:results){
-				LOG.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"+result.toString());
+				LOG.info("Got a result, content is [" + result.toString() + "].");
 			}
+			LOG.info(System.currentTimeMillis());
+
+			in.close();
+			out.close();
+			results.close();
+			table.close();
+			connection.close();
+			LOG.info("Mapper ended, time is [" + new Date() + "].");
 		}
 	}
 

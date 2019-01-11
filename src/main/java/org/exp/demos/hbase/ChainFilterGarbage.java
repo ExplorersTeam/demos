@@ -4,11 +4,12 @@ package org.exp.demos.hbase;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -20,28 +21,25 @@ import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-import org.apache.hadoop.hbase.mapred.TableInputFormat;
 import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
 import org.apache.hadoop.hbase.mapreduce.TableMapper;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
-import org.apache.hadoop.mapreduce.lib.chain.ChainMapper;
 import org.apache.hadoop.mapreduce.lib.chain.ChainReducer;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 import com.ctg.ctdfs.core.common.DFSConstants;
-import com.ctg.ctdfs.core.common.DFSContext;
 import com.ctg.ctdfs.core.common.HBaseClient;
 import com.google.common.collect.Maps;
 
 
 public class ChainFilterGarbage {
+	private static final Log LOG = LogFactory.getLog(ChainFilterGarbage.class);
+	
 	public static final String JOBNAME="FilterJob";
-	public static String HDFSFileName;
 	public static final long SMALLFILELENGTH = 2097152;
 	public static enum Counters {ROW,HDFSUriAmount,MigrationAmount,GarbageFileAmount,SmallFileAmount};
 
@@ -93,6 +91,7 @@ public class ChainFilterGarbage {
 		byte[] qualifier_d = Bytes.toBytes("d");//is dir or not of dfs file
 		byte[] qualifier_i = Bytes.toBytes("i");//the startindex of dfs file in hdfs file
 
+		@Override
 		public void map(ImmutableBytesWritable rowkey,Result columns,Context context) throws IOException, InterruptedException{
 			context.getCounter(Counters.ROW).increment(1);
 			Cell hdfsFileUri = columns.getColumnLatestCell(family, qualifier_n);
@@ -117,6 +116,7 @@ public class ChainFilterGarbage {
 		byte[] family = Bytes.toBytes("f");
 		byte[] qualifier_l = Bytes.toBytes("l");//the length of dfs file
 		
+		@Override
 		public void reduce(Text text,Iterable<Result> smallfiles,Context context) throws IOException, InterruptedException{
 			context.getCounter(Counters.HDFSUriAmount).increment(1);
 			long sum = 0;
@@ -129,7 +129,7 @@ public class ChainFilterGarbage {
 				sum += length;
 			}	
 			
-			if(filter(text.toString(),sum)){	
+			if(filter(text.toString(),sum) && !dfsfiles.isEmpty()){	
 				context.getCounter(Counters.GarbageFileAmount).increment(1);
 				context.write(text, dfsfiles);
 			}
@@ -170,6 +170,7 @@ public class ChainFilterGarbage {
 		Map<String,String> rowDataMap = Maps.newHashMap(); 
 		Text success = new Text("SUCCESS");
 		//map key=gabage hdfsuri value=dfsinfo
+		@Override
 		public void map(Text key,List<Result> smallfiles,Context context) throws IOException, InterruptedException{
 			String datafile = key.toString();
 			Path hdfsReadPath = new Path(datafile);

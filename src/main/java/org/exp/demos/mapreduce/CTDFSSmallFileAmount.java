@@ -3,6 +3,7 @@ package org.exp.demos.mapreduce;
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellUtil;
@@ -31,14 +32,14 @@ import org.apache.xml.serialize.OutputFormat;
  */
 public class CTDFSSmallFileAmount{
 	public static final String JOBNAME="SmallFileCounter";
-	public static final double SMALLFILELENGTH = 2097152;
+	public static final long SMALLFILELENGTH = 2097152;
 	public enum Counters{ROWS,SMALLFILEAMOUNT};
 	
 	static class CountTableMapper extends TableMapper<Text,LongWritable>{
 		/*
 		 * 判断是文件还是目录，如果是文件判断文件大小
 		 */
-		private boolean isSmallFile(double length,String isdictionary){
+		private boolean isSmallFile(long length,String isdictionary){
 			if(length<=SMALLFILELENGTH&&(isdictionary.equals("false"))){
 				return true;
 			}
@@ -55,15 +56,19 @@ public class CTDFSSmallFileAmount{
 			 * Result: Single row result of a {@link Get} or {@link Scan} query.<p>
 			 * 
 			 **/
+			//byte[] a = columns.getColumnLatest(family, qulifier_l).getValue();
 			Cell a = columns.getColumnLatestCell(family, qulifier_d);
 			Cell b = columns.getColumnLatestCell(family, qulifier_l);
+			byte[] c = columns.getRow();
 			if(a!=null && b!=null){
 				String isdictionary = Bytes.toString(CellUtil.cloneValue(a));
 				String filelength = Bytes.toString(CellUtil.cloneValue(b));
+				String filename = Bytes.toString(c);
 				context.getCounter(Counters.ROWS).increment(1);
-				double Filelength =  Double.valueOf(filelength);
+				long Filelength =  Long.valueOf(filelength);
 				if(isSmallFile(Filelength,isdictionary)){
 					context.getCounter(Counters.SMALLFILEAMOUNT).increment(1);
+					context.write(new Text(filename), new LongWritable(Filelength));
 				}
 			}
 		}
@@ -72,7 +77,7 @@ public class CTDFSSmallFileAmount{
 	public static void main(String []args) throws ClassNotFoundException, IOException, InterruptedException{
 		
 		String tablename = "dfs:dfs_file";
-		String output = "SmallFileAmount";
+		String output = "hdfs://h3/user/dfs/SmallFileAmount";
 		/**
 		 * 1、创建扫描器
 		 */
@@ -82,13 +87,26 @@ public class CTDFSSmallFileAmount{
 		 * 2、读取配置
 		 */
 		Configuration conf = new Configuration();
-		conf.addResource("core-site.xml");
+		//152 153 154环境
+		//conf.addResource("core-site.xml");
 		conf.addResource("hdfs-site.xml");
-		conf.set("hbase.zookeeper.quorum", "dfs1a1.ecld.com,dfs1m1.ecld.com,dfs1m2.ecld.com");
+		//conf.set("hbase.zookeeper.quorum", "dfs1a1.ecld.com,dfs1m1.ecld.com,dfs1m2.ecld.com");
 		conf.set("hbase.zookeeper.property.clientPort", "2181");
-		conf.set("zookeeper.znode.parent", "/hbase-secure");
-		conf.set("hbase.rootdir", "hdfs://ctdfs/apps/hbase/data");
+		//conf.set("zookeeper.znode.parent", "/hbase-secure");
+		//conf.set("hbase.rootdir", "hdfs://ctdfs/apps/hbase/data");
 		conf.set("fs.AbstractFileSystem.hdfs.impl", "org.apache.hadoop.fs.Hdfs");
+		//h3环境
+		conf.set("hbase.zookeeper.quorum", "h3a1.ecloud.com,h3m1.ecloud.com,h3m2.ecloud.com");
+		conf.set("zookeeper.znode.parent", "/hbase-h3");
+		conf.set("hbase.rootdir", "hdfs://h3/apps/hbase/data");
+
+		//每次运行程序之前删除运行结果的输出文件夹
+		FileSystem fs = FileSystem.get(conf);
+		if(fs.exists(new Path(output))){
+			fs.delete(new Path(output),true);
+		}
+		fs.close();
+
 		/**
 		 * 3、配置作业
 		 */
