@@ -1,7 +1,8 @@
-package org.exp.demos.hbase;
+package org.exp.demos.mapreduce;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -47,38 +48,18 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.exp.demos.writable.PartMetadataWritable;
 
 import com.ctg.ctdfs.core.common.DFSConstants;
-import com.ctg.ctdfs.core.common.DFSContext;
 import com.google.common.collect.Maps;
 
 public class SpaceFilterGarbageTest1 {
 	private static final Log LOG = LogFactory.getLog(SpaceFilterGarbageTest1.class);
 	public static final String JOBNAME1 = "FilterJob";
 	public static final String JOBNAME2 = "CollectJob";
-	public static String HDFSFileName;
 	public static final long SMALLFILELENGTH = 2097152;
-
-	public static enum Counters {
-		ROW, HDFSUriAmount, MigrationAmount, GarbageFileAmount, SmallFileAmount
-	};
-
-	public static long HDFSFileLength;
-
-	public static FileSystem fs;
-	public static URI uri;
-	public static Path path;
-	public static FileStatus filestatus;
-	public static FSDataInputStream fs_in;
-	public static FSDataOutputStream fs_out;
-	private static DFSContext dfsContext;
-	private static String tablegcname;
-	private static String tablename;
-
+	private static final String tablegcname = "ctdfs:dfs_file_gc";
+	private static final String tablename = "ctdfs:dfs_file";
 	private static byte[] family = Bytes.toBytes("f");
-	private static byte[] qualifier_l = Bytes.toBytes("l");// the length of dfs
-															// file
-	private static byte[] qualifier_i = Bytes.toBytes("i");// the startindex of
-															// dfs file in hdfs
-															// file
+	private static byte[] qualifier_l = Bytes.toBytes("l");// the length of dfs file
+	private static byte[] qualifier_i = Bytes.toBytes("i");// the startindex of dfs file in hdfs file
 	private static byte[] qualifier_n = Bytes.toBytes("n");// hdfs file uri
 	private static byte[] qualifier_s = Bytes.toBytes("s");
 	private static byte[] qualifier_t = Bytes.toBytes("t");
@@ -87,9 +68,32 @@ public class SpaceFilterGarbageTest1 {
 	private static byte[] qualifier_o = Bytes.toBytes("o");
 	private static byte[] qualifier_g = Bytes.toBytes("g");
 	private static byte[] qualifier_p = Bytes.toBytes("p");
+	public static enum Counters {
+		ROW, HDFSUriAmount, MigrationAmount, GarbageFileAmount, SmallFileAmount
+	};
 
-	public SpaceFilterGarbageTest1() {
+	private Configuration configuration;
+	private static FileSystem fileSystem;
+	
+	public SpaceFilterGarbageTest1() throws FileNotFoundException {
+		// 通过输入流读取配置文件
+		Configuration conf = new Configuration();
+		InputStream coreSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/core-site.xml"));
+		InputStream hdfsSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hdfs-site.xml"));
+		InputStream hbaseSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hbase-site.xml"));
+		InputStream yarnSiteInputStream = new FileInputStream(new File("/etc/hadoop/conf/yarn-site.xml"));
+		conf.addResource(coreSiteInputStream);
+		conf.addResource(hdfsSiteInputStream);
+		conf.addResource(hbaseSiteInputStream);
+		conf.addResource(yarnSiteInputStream);
+		conf.set("mapreduce.job.user.classpath.first", "true");
+		conf.set("mapreduce.task.classpath.user.precedence", "true");
+		conf.set("mapred.textoutputformat.separator", " ");
+		this.configuration = conf;
+	}
 
+	public Configuration getConfiguration() {
+		return configuration;
 	}
 
 	/**
@@ -97,14 +101,14 @@ public class SpaceFilterGarbageTest1 {
 	 */
 	private static boolean filter(String text, long sum, Configuration conf) throws IOException {
 		try {
-			uri = new URI(text);
-			fs = FileSystem.get(uri, conf);
-			path = new Path(text);
+			URI uri = new URI(text);
+			FileSystem fs = FileSystem.get(uri, conf);
+			Path path = new Path(text);
 			if (!fs.exists(path)) {
 				return false;
 			}
-			filestatus = fs.getFileStatus(path);
-			HDFSFileLength = filestatus.getLen();
+			FileStatus filestatus = fs.getFileStatus(path);
+			long HDFSFileLength = filestatus.getLen();
 			if (HDFSFileLength == 0) {
 				return false;
 			}
@@ -161,6 +165,12 @@ public class SpaceFilterGarbageTest1 {
 		return dataMap;
 	}
 
+	private static String getValue(Result result, byte[] family, byte[] qualifier) {
+		Cell cell = result.getColumnLatestCell(family, qualifier);
+		String value = Bytes.toString(CellUtil.cloneValue(cell));
+		return value;
+	}
+
 	static class GcMapper extends Mapper<LongWritable, Text, LongWritable, Text> {
 		private Configuration configuration = null;
 		Connection connection = null;
@@ -169,13 +179,19 @@ public class SpaceFilterGarbageTest1 {
 		// map key=gabage hdfsuri value=dfsinfo
 		@Override
 		public void setup(Context context) throws IOException {
+			System.setProperty("sun.security.krb5.debug", "true");
+			System.setProperty("javax.security.auth.useSubjectCredsOnly", "false");
+			LOG.info("sun.security.krb5.debug:" + System.getProperty("sun.security.krb5.debug"));
+			LOG.info("javax.security.auth.useSubjectCredsOnly:" + System.getProperty("javax.security.auth.useSubjectCredsOnly"));
 			configuration = context.getConfiguration();
 			LOG.info("-----hbase.regionserver.kerberos.principal:" + configuration.get("hbase.regionserver.kerberos.principal"));
 			LOG.info("-----hbase.master.kerberos.principal:" + configuration.get("hbase.master.kerberos.principal"));
+			LOG.info("-----yarn的属性:" + configuration.get("yarn.timeline-service.principal"));
 			connection = ConnectionFactory.createConnection(configuration);
 			table = connection.getTable(TableName.valueOf(tablename));
 			LOG.info("Table name is [" + table.getName().getNameAsString() + "].");
 			tablegc = connection.getTable(TableName.valueOf(tablegcname));
+			fileSystem = FileSystem.get(configuration);
 		}
 		
 		@Override
@@ -183,35 +199,19 @@ public class SpaceFilterGarbageTest1 {
 			String[] info = value.toString().split(" ");
 			String datafile = info[0];
 			String[] smallfiles = info[1].split(";");
-			// 使用UserGroupInformation进行Kerberos认证
-//			System.setProperty("java.security.krb5.conf", "/etc/krb5.conf");
-//			conf.set("keytab.file", "/home/ctdfs/hbase.headless.keytab");
-//			conf.set("kerberos.principal", "hbase-ctdfs2@ECLOUD.COM");
-//			UserGroupInformation.setConfiguration(conf);
-//			final String user = "hbase-ctdfs2@ECLOUD.COM";
-//			final String keyPath = "/home/ctdfs/hbase.headless.keytab";
-//			try {
-//				UserGroupInformation.loginUserFromKeytab(user, keyPath);
-//			} catch (IOException e) {
-//				e.printStackTrace();
-//			}
-//			LOG.info("kerberos.principal is : " + conf.get("kerberos.principal"));
-//			LOG.info("java.security.krb5.conf is : " + System.getProperty("java.security.krb5.conf"));
-
 			 // 文件元数据修改过程(操作hbase dfs:dfs_file表)
-
 			LOG.info("datafile uri is : " + datafile);
 			Path hdfsReadPath = new Path(datafile);
 			// 操作HDFS文件
-			FileSystem fs = hdfsReadPath.getFileSystem(configuration);
-			if (fs.exists(new Path(datafile + ".temp"))) {
-				fs.delete(new Path(datafile + ".temp"), true);
+			// FileSystem fs = hdfsReadPath.getFileSystem(configuration);
+			if (fileSystem.exists(new Path(datafile + ".temp"))) {
+				fileSystem.delete(new Path(datafile + ".temp"), true);
 			}
 			Path hdfsWritePath = new Path(datafile + ".temp");
 			// 通过job的context获取Configuration对象
 			LOG.info("ZooKeeper quorum is [" + configuration.get("hbase.zookeeper.quorum") + "].");
-			FSDataInputStream in = fs.open(hdfsReadPath);
-			FSDataOutputStream out = fs.create(hdfsWritePath, true);// temp文件覆盖写
+			FSDataInputStream in = fileSystem.open(hdfsReadPath);
+			FSDataOutputStream out = fileSystem.create(hdfsWritePath, true);// temp文件覆盖写
 			// 文件拷贝过程
 			int start = 0;
 			List<Put> puts = new ArrayList<>();
@@ -219,38 +219,43 @@ public class SpaceFilterGarbageTest1 {
 				String[] partSmallfile = smallfile.split(",");
 				LOG.info("rowkey is : " + partSmallfile[0] + ", length is : " + partSmallfile[1] + ", start is : " + partSmallfile[2]);
 				byte[] rowkey = Bytes.toBytes(partSmallfile[0]);
-				Get get = new Get(rowkey);
-				Result result = table.get(get);
-				LOG.info("result is : " + result.toString());
-				int length = Integer.valueOf(partSmallfile[1]);
-				long position = Long.valueOf(partSmallfile[2]);
-				boolean flag = migrationData(in, out, position, length);
-				LOG.info("is migration suceess or not ? " + flag);
-				// 修改元数据
-				if (flag) {
-					start += length;
-					Put put = new Put(rowkey);
-					put.addColumn(family, qualifier_i, Bytes.toBytes(start));
-					put.addColumn(family, qualifier_l, Bytes.toBytes(length));
-					put.addColumn(family, qualifier_d, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_d)));
-					put.addColumn(family, qualifier_f, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_f)));
-					put.addColumn(family, qualifier_g, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_g)));
-					put.addColumn(family, qualifier_n, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_n)));
-					put.addColumn(family, qualifier_o, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_o)));
-					put.addColumn(family, qualifier_p, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_p)));
-					put.addColumn(family, qualifier_s, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_s)));
-					put.addColumn(family, qualifier_t, Bytes.toBytes(result.getValueAsByteBuffer(family, qualifier_t)));
-					puts.add(put);
-					context.getCounter(Counters.MigrationAmount).increment(1);
+				try {
+					Get get = new Get(rowkey);
+					Result result = table.get(get);
+					LOG.info("result is : " + result.toString());
+					int length = Integer.valueOf(partSmallfile[1]);
+					long position = Long.valueOf(partSmallfile[2]);
+					boolean flag = migrationData(in, out, position, length);
+					LOG.info("is migration suceess or not ? " + flag);
+					// 修改元数据
+					if (flag) {
+						Put put = new Put(rowkey);
+						put.addColumn(family, qualifier_i, result.getColumnLatestCell(family, qualifier_i).getTimestamp(), Bytes.toBytes(String.valueOf(start)));
+						put.addColumn(family, qualifier_l, result.getColumnLatestCell(family, qualifier_l).getTimestamp(), Bytes.toBytes(String.valueOf(length)));
+						put.addColumn(family, qualifier_d, result.getColumnLatestCell(family, qualifier_d).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_d)));
+						put.addColumn(family, qualifier_f, result.getColumnLatestCell(family, qualifier_f).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_f)));
+						put.addColumn(family, qualifier_g, result.getColumnLatestCell(family, qualifier_g).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_g)));
+						put.addColumn(family, qualifier_n, result.getColumnLatestCell(family, qualifier_n).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_n)));
+						put.addColumn(family, qualifier_o, result.getColumnLatestCell(family, qualifier_o).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_o)));
+						put.addColumn(family, qualifier_p, result.getColumnLatestCell(family, qualifier_p).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_p)));
+						put.addColumn(family, qualifier_s, result.getColumnLatestCell(family, qualifier_s).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_s)));
+						put.addColumn(family, qualifier_t, result.getColumnLatestCell(family, qualifier_t).getTimestamp(), Bytes.toBytes(getValue(result, family, qualifier_t)));
+						puts.add(put);
+						start += length;
+						context.getCounter(Counters.MigrationAmount).increment(1);
+					}
+				} catch (Exception exception) {
+					LOG.error("catch exception:" + exception.getMessage());
+					break;
 				}
 			}
 			tablegc.put(puts);
 			// 文件重命名
-			// fs.rename(hdfsWritePath, hdfsReadPath);
+			//fs.delete(hdfsReadPath, true);
+			//fs.rename(hdfsWritePath, hdfsReadPath);
 			LOG.info(System.currentTimeMillis());
 			in.close();
 			out.close();
-			fs.close();
 			context.write(key, value);
 			LOG.info("Mapper ended, time is [" + new Date() + "].");
 		}
@@ -258,9 +263,11 @@ public class SpaceFilterGarbageTest1 {
 		@Override
 		public void cleanup(Context context) {
 			try {
+				LOG.info("-----close table&tablegc&connection&fileSystem");
 				table.close();
 				tablegc.close();
 				connection.close();
+				// fileSystem.close();
 			} catch (IOException e) {
 				LOG.info("close failly : " + e.getMessage());
 			}
@@ -317,10 +324,13 @@ public class SpaceFilterGarbageTest1 {
 	}
 
 	public static void main(String[] args) throws ClassNotFoundException, IOException, InterruptedException {
-		tablegcname = args[0];
-		tablename = args[1];
+		// tablegcname = "ctdfs:dfs_file_gc";
+		// tablename = "ctdfs:dfs_file";
 		String output1 = "GarbageFilterResult";
 		String output2 = "GarbageCollectResult";
+		System.setProperty("sun.security.krb5.debug", "true");
+		System.setProperty("javax.security.auth.useSubjectCredsOnly", "false");
+		SpaceFilterGarbageTest1 spaceFilterGarbageTest1 = new SpaceFilterGarbageTest1();
 		Scan scan = new Scan();
 		/*
 		 * 1、从HBase表中读入数据-TableInputFormat
@@ -336,37 +346,7 @@ public class SpaceFilterGarbageTest1 {
 		 * (复制阶段)将垃圾文件中的小文件复制到一块新的文件上
 		 * (删除阶段)删除垃圾文件
 		 */
-		Configuration conf = new Configuration();
-		// 通过输入流读取配置文件
-		InputStream coreSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/core-site.xml"));
-		InputStream hdfsSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hdfs-site.xml"));
-		InputStream hbaseSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hbase-site.xml"));
-		InputStream yarnSiteInputStream = new FileInputStream(new File("/etc/hadoop/conf/yarn-site.xml"));
-		conf.addResource(coreSiteInputStream);
-		conf.addResource(hdfsSiteInputStream);
-		conf.addResource(hbaseSiteInputStream);
-		conf.addResource(yarnSiteInputStream);
-		conf.set("mapreduce.job.user.classpath.first", "true");
-		conf.set("mapreduce.task.classpath.user.precedence", "true");
-		conf.set("mapred.textoutputformat.separator", " ");
-		// String krbPath = "/etc/krb5.cof";
-		// System.setProperty("java.security.krb5.conf", krbPath);
-
-		// 使用UserGroupInformation进行Kerberos认证
-//		System.setProperty("java.security.krb5.conf", "/etc/krb5.conf");
-//		conf.set("keytab.file", "/home/ctdfs/ctdfs/keytabs/ctdfs.ctdfs2.keytab");
-//		conf.set("kerberos.principal", "ctdfs/ctdfs2a1.ecloud.com@ECLOUD.COM");
-//		UserGroupInformation.setConfiguration(conf);
-//		final String user = "ctdfs/ctdfs2a1.ecloud.com@ECLOUD.COM";
-//		final String keyPath = "/home/ctdfs/ctdfs/keytabs/ctdfs.ctdfs2.keytab";
-//		try {
-//			UserGroupInformation.loginUserFromKeytab(user, keyPath);
-//		} catch (IOException e) {
-//			e.printStackTrace();
-//		}
-//		LOG.info("kerberos.principal is : " + conf.get("kerberos.principal"));
-//		LOG.info("java.security.krb5.conf is : " + System.getProperty("java.security.krb5.conf"));
-
+		Configuration conf = spaceFilterGarbageTest1.getConfiguration();
 		// 每次运行程序之前删除运行结果的输出文件夹
 		FileSystem fs = FileSystem.get(conf);
 		if (fs.exists(new Path(output1))) {
@@ -375,10 +355,10 @@ public class SpaceFilterGarbageTest1 {
 		if (fs.exists(new Path(output2))) {
 			fs.delete(new Path(output2), true);
 		}
-		fs.close();
+
 		// job1:获取垃圾hdfsuri
 		Job job1 = new Job(conf, JOBNAME1);
-		job1.setJarByClass(SpaceFilterGarbage.class);
+		job1.setJarByClass(SpaceFilterGarbageTest1.class);
 		TableMapReduceUtil.initTableMapperJob(tablename, scan, FilterMapper.class, Text.class, Result.class, job1);
 		job1.setReducerClass(FilterReducer.class);
 		job1.setNumReduceTasks(1);
@@ -387,7 +367,7 @@ public class SpaceFilterGarbageTest1 {
 		FileOutputFormat.setOutputPath(job1, path1);
 		// job2:回收垃圾hdfsuri
 		Job job2 = new Job(conf, JOBNAME2);
-		job2.setJarByClass(SpaceFilterGarbage.class);
+		job2.setJarByClass(SpaceFilterGarbageTest1.class);
 		job2.setMapperClass(GcMapper.class);
 		FileInputFormat.addInputPath(job2, path1);
 		Path path2 = new Path(output2);
@@ -421,5 +401,8 @@ public class SpaceFilterGarbageTest1 {
 				break;
 			}
 		}
+		LOG.info("not FileSystem close");
+		// fileSystem.close();
+		// fs.close();
 	}
 }

@@ -1,4 +1,4 @@
-package org.exp.demos.hbase;
+package org.exp.demos.mapreduce;
 
 
 import java.io.File;
@@ -35,6 +35,7 @@ import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
 import org.apache.hadoop.hbase.mapreduce.TableMapper;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -43,16 +44,15 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.jobcontrol.ControlledJob;
 import org.apache.hadoop.mapreduce.lib.jobcontrol.JobControl;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.exp.demos.mapreduce.ChainRowkeyFilterGarbage;
 
 import com.ctg.ctdfs.core.common.DFSConstants;
 import com.ctg.ctdfs.core.common.DFSContext;
 import com.google.common.collect.Maps;
 
 public class SpaceFilterGarbage {
-	private static final Log LOG = LogFactory.getLog(ChainRowkeyFilterGarbage.class);
-	public static final String JOBNAME1 = "FilterJob";
-	public static final String JOBNAME2 = "CollectJob";
+	private static final Log LOG = LogFactory.getLog(SpaceFilterGarbage.class);
+	public static final String JOBNAME1 = "SpaceFilterJob";
+	public static final String JOBNAME2 = "SpaceCollectJob";
 	public static String HDFSFileName;
 	public static final long SMALLFILELENGTH = 2097152;
 	public static enum Counters {ROW,HDFSUriAmount,MigrationAmount,GarbageFileAmount,SmallFileAmount};
@@ -128,8 +128,24 @@ public class SpaceFilterGarbage {
         return dataMap;
     }
 
+	/**
+	 * 垃圾文件有效数据拷贝
+	 */
+	private static int migrationData(FSDataInputStream inputStream, FSDataOutputStream outputStream, Long position, int length) {
+		byte[] buffer = new byte[length];
+		int offset = 0;
+		int readBytes = 0;
+		try {
+			readBytes = inputStream.read(position, buffer, offset, length);
+			outputStream.write(buffer);
+			LOG.info("the bytes has been readed is : " + readBytes);
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return readBytes;
+	}
 
-	static class GcMapper extends Mapper<LongWritable, Text, Text, Text> {
+	static class GcMapper extends Mapper<LongWritable, Text, Text, NullWritable> {
 		byte[] family = Bytes.toBytes("f");
 		byte[] qualifier_l = Bytes.toBytes("l");//the length of dfs file
 		byte[] qualifier_i = Bytes.toBytes("i");//the startindex of dfs file in hdfs file
@@ -142,60 +158,86 @@ public class SpaceFilterGarbage {
 		byte[] qualifier_g = Bytes.toBytes("g");
 		byte[] qualifier_p = Bytes.toBytes("p");
 
-		
 		String tableName = "dfs:dfs_file";
 
 		//map key=gabage hdfsuri value=dfsinfo
 		@Override
 		public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+			// // 通过job的context获取Configuration对象
+			// Configuration conf = context.getConfiguration();
+			// LOG.info("ZooKeeper quorum is [" +
+			// conf.get("hbase.zookeeper.quorum") + "].");
+			// 操作HDFS文件
 			String datafile = value.toString().trim();
 			LOG.info("datafile uri is : " + datafile);
-			Path hdfsReadPath = new Path(datafile);
-			Path hdfsWritePath = new Path(datafile +".temp");
-			// 在每个map里实例化Configuration
-			Configuration conf = new Configuration();
-			// conf.set("hbase.zookeeper.property.clientPort", "2181");
-			// conf.set("fs.AbstractFileSystem.hdfs.impl",
-			// "org.apache.hadoop.fs.Hdfs");
-			// conf.set("hbase.zookeeper.quorum",
-			// "h3a1.ecloud.com,h3m1.ecloud.com,h3m2.ecloud.com");
-			// conf.set("zookeeper.znode.parent", "/hbase-h3");
-			// conf.set("hbase.rootdir", "hdfs://h3/apps/hbase/data");
-			InputStream coreSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/core-site.xml"));
-			InputStream hdfsSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hdfs-site.xml"));
-			InputStream hbaseSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hbase-site.xml"));
-			conf.addResource(coreSiteInputStream);
-			conf.addResource(hdfsSiteInputStream);
-			conf.addResource(hbaseSiteInputStream);
+			// Path hdfsReadPath = new Path(datafile);
+			// Path hdfsWritePath = new Path(datafile +".temp");
+			// FileSystem fs = hdfsReadPath.getFileSystem(conf);
+			// FSDataInputStream in = fs.open(hdfsReadPath);
+			// FSDataOutputStream out = fs.create(hdfsWritePath, true);//
+			// temp文件覆盖写
+			// // 根据hdfsUri获取其对应的HBase记录(利用过滤器获取)
+			// Connection connection = ConnectionFactory.createConnection(conf);
+			// Table table = connection.getTable(TableName.valueOf(tableName));
+			// LOG.info("Table name is [" + table.getName().getNameAsString() +
+			// "].");
+			// // do not use hbaseClient,use SingleColumnValueFilter get the
+			// useful
+			// // record
+			// Scan scan = new Scan();
+			// scan.setFilter(new SingleColumnValueFilter(family, qualifier_n,
+			// CompareOp.EQUAL, datafile.getBytes()));
+			// LOG.debug("is filter set successfully? " + scan.hasFilter());
+			// ResultScanner results = table.getScanner(scan);
+			// LOG.info("Got result? [" + results.iterator().hasNext() + "].");
+			// for (Result result : results) {
+			// LOG.info("Got a result, content is [" + result.toString() +
+			// "].");
+			// }
 
-			LOG.info("ZooKeeper quorum is [" + conf.get("hbase.zookeeper.quorum") + "].");
-			fs = hdfsReadPath.getFileSystem(conf);
-			FSDataInputStream in = null;
-			in = fs.open(hdfsReadPath);
-			FSDataOutputStream out = fs.create(hdfsWritePath, true);// temp文件覆盖写
-			// 文件拷贝过程
+			LOG.info(System.currentTimeMillis());
+			// in.close();
+			// out.close();
+			// results.close();
+			// table.close();
+			// connection.close();
+			// fs.close();
+			context.write(new Text(datafile), NullWritable.get());
+			LOG.info("Mapper ended, time is [" + new Date() + "].");
+		}
+	}
 
-			// 文件元数据修改过程(操作hbase dfs:dfs_file表)
+	static class GCReducer extends Reducer<Text, NullWritable, Text, Text> {
+		String tableName = "dfs:dfs_file";
+		byte[] family = Bytes.toBytes("f");
+		byte[] qualifier_n = Bytes.toBytes("n");
+
+		@Override
+		public void reduce(Text key, Iterable<NullWritable> value, Context context) throws IOException, InterruptedException {
+			// 通过job的context获取Configuration对象
+			Configuration conf = context.getConfiguration();
+			String datafile = key.toString().trim();
+			LOG.info("datafile is : " + datafile);
+			// 获取垃圾大文件中有效小文件元数据的过程(操作hbase dfs:dfs_file表)
 			Connection connection = ConnectionFactory.createConnection(conf);
 			Table table = connection.getTable(TableName.valueOf(tableName));
 			LOG.info("Table name is [" + table.getName().getNameAsString() + "].");
 			// do not use hbaseClient,use SingleColumnValueFilter get the useful
 			// record
 			Scan scan = new Scan();
-			scan.setFilter(new SingleColumnValueFilter(family, qualifier_n, CompareOp.EQUAL, datafile.getBytes()));
+			SingleColumnValueFilter singleColumnValueFilter = new SingleColumnValueFilter(family, qualifier_n, CompareOp.EQUAL, datafile.getBytes());
+			scan.setFilter(singleColumnValueFilter);
+			LOG.info("is filter set successfully? " + scan.hasFilter());
 			ResultScanner results = table.getScanner(scan);
 			LOG.info("Got result? [" + results.iterator().hasNext() + "].");
 			for (Result result : results) {
 				LOG.info("Got a result, content is [" + result.toString() + "].");
 			}
-			LOG.info(System.currentTimeMillis());
-
-			in.close();
-			out.close();
+			context.write(new Text(datafile), new Text("success"));
 			results.close();
 			table.close();
 			connection.close();
-			LOG.info("Mapper ended, time is [" + new Date() + "].");
+			LOG.info("GCReducer ended, time is [" + new Date() + "].");
 		}
 	}
 	
@@ -283,15 +325,29 @@ public static void main(String []args) throws ClassNotFoundException, IOExceptio
 		 * (删除阶段)删除垃圾文件
 		 */
 		Configuration conf = new Configuration();
-		// h3环境
-		conf.addResource("core-site.xml");
-		conf.addResource("hdfs-site.xml");
-		conf.addResource("hbase-site.xml");
-		conf.set("hbase.zookeeper.property.clientPort", "2181");
-		conf.set("fs.AbstractFileSystem.hdfs.impl", "org.apache.hadoop.fs.Hdfs");
-		conf.set("hbase.zookeeper.quorum", "h3a1.ecloud.com,h3m1.ecloud.com,h3m2.ecloud.com");
-		conf.set("zookeeper.znode.parent", "/hbase-h3");
-		conf.set("hbase.rootdir", "hdfs://h3/apps/hbase/data");
+		// 通过输入流读取配置文件
+		InputStream coreSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/core-site.xml"));
+		InputStream hdfsSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hdfs-site.xml"));
+		InputStream hbaseSiteInputStream = new FileInputStream(new File("/etc/hbase/conf/hbase-site.xml"));
+		conf.addResource(coreSiteInputStream);
+		conf.addResource(hdfsSiteInputStream);
+		conf.addResource(hbaseSiteInputStream);
+		conf.set("mapreduce.job.user.classpath.first", "true");
+		conf.set("mapreduce.task.classpath.user.precedence", "true");
+		// String krbPath = "/etc/krb5.cof";
+		// System.setProperty("java.security.krb5.conf", krbPath);
+
+		// 使用UserGroupInformation进行Kerberos认证
+		// UserGroupInformation.setConfiguration(conf);
+		// final String user = "dfs/h3a1.ecloud.com";
+		// final String keyPath = "/etc/security/keytabs/dfs.app.keytab";
+		// try {
+		// UserGroupInformation.loginUserFromKeytab(user, keyPath);
+		// } catch (IOException e) {
+		// e.printStackTrace();
+		// }
+		// LOG.info("hbase.regionserver.kerberos.principal is : " +
+		// conf.get("hbase.regionserver.kerberos.principal"));
 
 		//每次运行程序之前删除运行结果的输出文件夹
 		FileSystem fs = FileSystem.get(conf);
@@ -315,9 +371,6 @@ public static void main(String []args) throws ClassNotFoundException, IOExceptio
 				);
 		job1.setReducerClass(FilterReducer.class);
 		job1.setNumReduceTasks(1);
-		// Job控制器:将Job1加入控制器
-		ControlledJob ctrljob1 = new ControlledJob(conf);
-		ctrljob1.setJob(job1);
 		// 设置job1的执行结果输出路径
 		Path path1 = new Path(output1);
 		FileOutputFormat.setOutputPath(job1, path1);
@@ -325,15 +378,22 @@ public static void main(String []args) throws ClassNotFoundException, IOExceptio
 		Job job2 = new Job(conf, JOBNAME2);
 		job2.setJarByClass(SpaceFilterGarbage.class);
 		job2.setMapperClass(GcMapper.class);
+		job2.setReducerClass(GCReducer.class);
+		job2.setMapOutputKeyClass(Text.class);
+		job2.setMapOutputValueClass(NullWritable.class);
+		job2.setNumReduceTasks(1);
+		FileInputFormat.addInputPath(job2, path1);
+		Path path2 = new Path(output2);
+		FileOutputFormat.setOutputPath(job2, path2);
+		// Job控制器:将Job1加入控制器
+		ControlledJob ctrljob1 = new ControlledJob(conf);
+		ctrljob1.setJob(job1);
 		//job2加入控制器
 		ControlledJob ctrljob2=new ControlledJob(conf);   
         ctrljob2.setJob(job2); 
 		// 设置多个作业直接的依赖关系：job2的启动，依赖于job1作业的完成
 		// job1的输出路径path1是job2的输入路径
         ctrljob2.addDependingJob(ctrljob1);
-		FileInputFormat.addInputPath(job2, path1);
-		Path path2 = new Path(output2);
-		FileOutputFormat.setOutputPath(job2, path2);
 		// 主控制器
         JobControl jobCtrl=new JobControl("myctrl");
         jobCtrl.addJob(ctrljob1);   
@@ -347,6 +407,12 @@ public static void main(String []args) throws ClassNotFoundException, IOExceptio
         		jobCtrl.stop();   
         		break;   
         	} 
+			if (jobCtrl.getFailedJobList().size() > 0) {
+				System.out.println(jobCtrl.getFailedJobList());
+				System.out.println("有作业执行失败");
+				jobCtrl.stop();
+				break;
+			}
         }
 	}
 }
