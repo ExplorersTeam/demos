@@ -28,7 +28,6 @@ import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.exp.demos.writable.PartMetadataWritable;
-import org.exp.demos.writable.TextAndLongWritable;
 
 public class FilterJob {
 	private static final Log LOG = LogFactory.getLog(FilterJob.class);
@@ -59,6 +58,9 @@ public class FilterJob {
 		configuration.addResource(hdfsSiteInputStream);
 		configuration.addResource(hbaseSiteInputStream);
 		configuration.addResource(yarnSiteInputStream);
+		configuration.set("mapreduce.job.user.classpath.first", "true");
+		configuration.set("mapreduce.task.classpath.user.precedence", "true");
+		configuration.set("mapred.textoutputformat.separator", " ");
 	}
 
 	public Configuration getConfiguration() {
@@ -68,7 +70,7 @@ public class FilterJob {
 	/**
 	 * 判别text对应的HDFS文件是否是垃圾文件
 	 */
-	public static boolean filter(String text, long sum, Configuration conf) throws IOException {
+	public static boolean filter(FileSystem fileSystem, String text, long sum) throws IOException {
 		Path path = new Path(text);
 		if (!fileSystem.exists(path)) {
 			return false;
@@ -118,6 +120,11 @@ public class FilterJob {
 
 	static class FilterReducer extends Reducer<Text, Result, Text, Text> {
 		@Override
+		public void setup(Context context) throws IOException {
+			fileSystem = FileSystem.get(context.getConfiguration());
+		}
+
+		@Override
 		public void reduce(Text text, Iterable<Result> smallfiles, Context context) throws IOException, InterruptedException {
 			// 利用TreeSet过滤重复小文件
 			TreeSet<PartMetadataWritable> treeSet = new TreeSet<>();
@@ -125,8 +132,8 @@ public class FilterJob {
 			for (Result smallfile : smallfiles) {
 				Cell fileLength = smallfile.getColumnLatestCell(family, qualifier_l);
 				Cell fileStart = smallfile.getColumnLatestCell(family, qualifier_i);
-				long length = Bytes.toLong(CellUtil.cloneValue(fileLength));
-				long start = Bytes.toLong(CellUtil.cloneValue(fileStart));
+				long length = Long.valueOf(Bytes.toString(CellUtil.cloneValue(fileLength)));
+				long start = Long.valueOf(Bytes.toString(CellUtil.cloneValue(fileStart)));
 				String rowkey = Bytes.toString(smallfile.getRow());
 				PartMetadataWritable partMetadataWritable = new PartMetadataWritable(rowkey, length, start, text.toString());
 				treeSet.add(partMetadataWritable);
@@ -138,10 +145,15 @@ public class FilterJob {
 				sum += length;
 				sb.append(partMetadataWritable.toString());
 			}
-			if (filter(text.toString(), sum, context.getConfiguration())) {
+			if (filter(fileSystem, text.toString(), sum)) {
 				context.getCounter(Counters.GarbageFileAmount).increment(1);
 				context.write(text, new Text(sb.toString()));
 			}
+		}
+
+		@Override
+		public void cleanup(Context context) throws IOException {
+			fileSystem.close();
 		}
 	}
 
@@ -158,7 +170,7 @@ public class FilterJob {
 		}
 		Job job = new Job(conf, JOBNAME);
 		job.setJarByClass(FilterJob.class);
-		TableMapReduceUtil.initTableMapperJob(tablename, scan, FilterMapper.class, Text.class, TextAndLongWritable.class, job);
+		TableMapReduceUtil.initTableMapperJob(tablename, scan, FilterMapper.class, Text.class, Result.class, job);
 		job.setReducerClass(FilterReducer.class);
 		job.setNumReduceTasks(1);
 		job.setOutputKeyClass(Text.class);
