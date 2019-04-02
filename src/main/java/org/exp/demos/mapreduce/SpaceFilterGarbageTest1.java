@@ -267,7 +267,6 @@ public class SpaceFilterGarbageTest1 {
 				table.close();
 				tablegc.close();
 				connection.close();
-				// fileSystem.close();
 			} catch (IOException e) {
 				LOG.info("close failly : " + e.getMessage());
 			}
@@ -402,7 +401,7 @@ public class SpaceFilterGarbageTest1 {
 			}
 		}
 		LOG.info("not FileSystem close");
-		// fileSystem.close();
-		// fs.close();
+		fileSystem.close();
+		fs.close();
 	}
 }

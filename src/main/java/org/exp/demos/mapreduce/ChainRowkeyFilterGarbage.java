@@ -49,7 +49,7 @@ import com.google.common.collect.Maps;
 
 public class ChainRowkeyFilterGarbage {
 	private static final Log LOG = LogFactory.getLog(ChainRowkeyFilterGarbage.class);
-	public static final String JOBNAME="FilterJob";
+	public static final String JOBNAME = "ChainFilterJob";
 	public static final long SMALLFILELENGTH = 2097152;
 	public static enum Counters {ROW,HDFSUriAmount,MigrationAmount,GarbageFileAmount,SmallFileAmount};
 
@@ -81,8 +81,14 @@ public class ChainRowkeyFilterGarbage {
 			conf = new Configuration();
 			fs = FileSystem.get(uri, conf);
 			path=new Path(text);
+			if (!fs.exists(path)) {
+				return false;
+			}
 			filestatus = fs.getFileStatus(path);
 			hdfsFileLength = filestatus.getLen();
+			if (hdfsFileLength == 0) {
+				return false;
+			}
 			float result = ((float)sum/(float)hdfsFileLength);
 			if(result<0.2){
 				return true;
@@ -244,12 +250,14 @@ public class ChainRowkeyFilterGarbage {
 			FSDataInputStream in = null;
 			in = fs.open(hdfsReadPath);
 			FSDataOutputStream out = fs.create(hdfsWritePath,true);//temp文件覆盖写
+
 			Connection connection = ConnectionFactory.createConnection(conf);
 			Table table = connection.getTable(TableName.valueOf(tableName));
 			LOG.info("Table name is [" + table.getName().getNameAsString() + "].");
 			//do not use hbaseClient,use SingleColumnValueFilter get the useful record			
 			Scan scan = new Scan();
-			scan.setFilter(new SingleColumnValueFilter(family, qualifier_t, CompareOp.EQUAL, datafile.getBytes()));
+			LOG.info("is get scan ? " + scan.isGetScan());
+			scan.setFilter(new SingleColumnValueFilter(family, qualifier_n, CompareOp.EQUAL, datafile.getBytes()));
 			ResultScanner results = table.getScanner(scan);
 			LOG.info("Got result? [" + results.iterator().hasNext() + "].");
 			for(Result result:results){
