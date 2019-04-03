@@ -112,8 +112,8 @@ public class FilterJob {
 				String isdir = Bytes.toString(CellUtil.cloneValue(isDir));
 				if (issmallfile(length, isdir)) {
 					context.getCounter(Counters.SmallFileAmount).increment(1);
-					context.write(new Text(hdfsFileUriStr), columns);
 				}
+				context.write(new Text(hdfsFileUriStr), columns);
 			}
 		}
 	}
