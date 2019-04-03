@@ -36,8 +36,6 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class CollectJob {
 	private static final Log LOG = LogFactory.getLog(CollectJob.class);
 	private static final String JOBNAME = "CollectJob";
-	private static final String tablegcname = "ctdfs:dfs_file_gc";
-	private static final String tablename = "ctdfs:dfs_file";
 	private static byte[] family = Bytes.toBytes("f");
 	private static byte[] qualifier_l = Bytes.toBytes("l");// the length of dfs file
 	private static byte[] qualifier_i = Bytes.toBytes("i");// the startindex of dfs file in hdfs file
@@ -50,7 +48,6 @@ public class CollectJob {
 	private static byte[] qualifier_g = Bytes.toBytes("g");
 	private static byte[] qualifier_p = Bytes.toBytes("p");
 	private static FileSystem fileSystem;
-	private static FileSystem fileSystem2;
 	private Configuration configuration;
 
 	public static enum Counters {
@@ -74,6 +71,7 @@ public class CollectJob {
 	public Configuration getConfiguration() {
 		return configuration;
 	}
+
 	/**
 	 * 从A文件读出指定数据，写入B文件
 	 */
@@ -100,8 +98,6 @@ public class CollectJob {
 		private Configuration configuration = null;
 		Connection connection = null;
 		Table table = null;
-		Table tablegc = null;
-
 		// map key=gabage hdfsuri value=dfsinfo
 		@Override
 		public void setup(Context context) throws IOException {
@@ -113,10 +109,10 @@ public class CollectJob {
 			LOG.info("-----hbase.regionserver.kerberos.principal:" + configuration.get("hbase.regionserver.kerberos.principal"));
 			LOG.info("-----hbase.master.kerberos.principal:" + configuration.get("hbase.master.kerberos.principal"));
 			connection = ConnectionFactory.createConnection(configuration);
-			table = connection.getTable(TableName.valueOf(tablename));
+			LOG.info("-----tablename:" + configuration.get("tablename"));
+			table = connection.getTable(TableName.valueOf(configuration.get("tablename")));
 			LOG.info("Table name is [" + table.getName().getNameAsString() + "].");
-			tablegc = connection.getTable(TableName.valueOf(tablegcname));
-			fileSystem2 = FileSystem.get(configuration);
+			fileSystem = FileSystem.get(configuration);
 		}
 
 		@Override
@@ -129,14 +125,14 @@ public class CollectJob {
 			LOG.info("datafile uri is : " + datafile);
 			Path hdfsReadPath = new Path(datafile);
 			// 操作HDFS文件
-			if (fileSystem2.exists(new Path(datafile + ".temp"))) {
-				fileSystem2.delete(new Path(datafile + ".temp"), true);
+			if (fileSystem.exists(new Path(datafile + ".temp"))) {
+				fileSystem.delete(new Path(datafile + ".temp"), true);
 			}
 			Path hdfsWritePath = new Path(datafile + ".temp");
 			// 通过job的context获取Configuration对象
 			LOG.info("ZooKeeper quorum is [" + configuration.get("hbase.zookeeper.quorum") + "].");
-			FSDataInputStream in = fileSystem2.open(hdfsReadPath);
-			FSDataOutputStream out = fileSystem2.create(hdfsWritePath, true);// temp文件覆盖写
+			FSDataInputStream in = fileSystem.open(hdfsReadPath);
+			FSDataOutputStream out = fileSystem.create(hdfsWritePath, true);// temp文件覆盖写
 			// 文件拷贝过程
 			int start = 0;
 			List<Put> puts = new ArrayList<>();
@@ -169,10 +165,12 @@ public class CollectJob {
 					context.getCounter(Counters.MigrationAmount).increment(1);
 				}
 			}
-			tablegc.put(puts);
+			table.put(puts);
 			// 文件重命名
-			// fileSystem.delete(hdfsReadPath);
-			// fileSystem.rename(hdfsWritePath, hdfsReadPath);
+			if (fileSystem.exists(hdfsReadPath)) {
+				fileSystem.delete(hdfsReadPath, true);
+			}
+			fileSystem.rename(hdfsWritePath, hdfsReadPath);
 			LOG.info(System.currentTimeMillis());
 			in.close();
 			out.close();
@@ -184,7 +182,6 @@ public class CollectJob {
 		public void cleanup(Context context) {
 			try {
 				table.close();
-				tablegc.close();
 				connection.close();
 			} catch (IOException e) {
 				LOG.info("close failly : " + e.getMessage());
@@ -193,13 +190,15 @@ public class CollectJob {
 	}
 
 	public static void main(String[] args) throws IllegalArgumentException, IOException, ClassNotFoundException, InterruptedException {
-		String input = args[0]; // 垃圾文件信息存储路径
-		String output = args[1]; // 输出路径
+		String input = "FilterJobResult"; // 垃圾文件信息存储路径
+		String output = "CollectJobResult"; // 输出路径
+		// System.setProperty("sun.security.krb5.debug", "true");
 		CollectJob collectJob = new CollectJob();
 		Configuration conf = collectJob.getConfiguration();
-		fileSystem = FileSystem.get(conf);
-		if (fileSystem.exists(new Path(output))) {
-			fileSystem.delete(new Path(output), true);
+		conf.set("tablename", args[0]);
+		FileSystem fs = FileSystem.get(conf);
+		if (fs.exists(new Path(output))) {
+			fs.delete(new Path(output), true);
 		}
 		Job job = new Job(conf, JOBNAME);
 		job.setJarByClass(CollectJob.class);
@@ -208,7 +207,7 @@ public class CollectJob {
 		FileInputFormat.addInputPath(job, new Path(input));
 		FileOutputFormat.setOutputPath(job, new Path(output));
 		System.exit(job.waitForCompletion(true) ? 0 : 1);
+		fs.close();
 		fileSystem.close();
-		fileSystem2.close();
 	}
 }
