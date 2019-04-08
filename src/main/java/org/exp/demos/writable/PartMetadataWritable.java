@@ -70,6 +70,7 @@ public class PartMetadataWritable implements WritableComparable<PartMetadataWrit
 			if (compareLength == 0) {
 				return start.compareTo(o.start);
 			}
+			return compareLength;
 		}
 		return compareDatafile;
 	}
